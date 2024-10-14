@@ -3,24 +3,33 @@ package main
 import (
 	"fmt"
 	"github.com/Tnze/go-mc/nbt"
-	"io/ioutil"
 	"os"
+	"path"
+	"strings"
 	"time"
 )
 
+const outputFolder = "./output"
+
 // Chunk represents a Minecraft chunk with x, z coordinates and time
 type Chunk struct {
-	X    int32 `nbt:"x"`
-	Z    int32 `nbt:"z"`
-	Time int64 `nbt:"time"`
+	X           int32  `nbt:"x"`
+	Z           int32  `nbt:"z"`
+	Time        int64  `nbt:"time"`
+	Forceloaded *int64 `nbt:"forceloaded"`
+}
+
+type MemberData struct {
+	// TODO implement this
 }
 
 // ChunkData represents the structure of NBT data to hold chunk coordinates
 type ChunkData struct {
-	MaxClaimChunks     int32   `nbt:"max_claim_chunks"`
-	MaxForceLoadChunks int32   `nbt:"max_force_load_chunks"`
-	LastLoginTime      int64   `nbt:"last_login_time"`
-	ChunksOverworld    []Chunk `nbt:"chunks"`
+	MaxClaimChunks     int32              `nbt:"max_claim_chunks"`
+	MaxForceLoadChunks int32              `nbt:"max_force_load_chunks"`
+	LastLoginTime      int64              `nbt:"last_login_time"`
+	Chunks             map[string][]Chunk `nbt:"chunks"`
+	MemberData         MemberData         `nbt:"member_data"`
 }
 
 type State struct {
@@ -69,18 +78,17 @@ func convertOpenPaCToChunkData(o *OpenPaC) *ChunkData {
 		MaxClaimChunks:     250,
 		MaxForceLoadChunks: 2,
 		LastLoginTime:      time.Now().Unix(),
-		ChunksOverworld:    make([]Chunk, 0),
+		Chunks:             make(map[string][]Chunk, len(o.Dimensions)),
 	}
 	for i, dim := range o.Dimensions {
+		c.Chunks[i] = make([]Chunk, 0)
 		for _, cl := range dim.Claims {
 			for _, pos := range cl.Claims {
-				if i == "minecraft:overworld" {
-					c.ChunksOverworld = append(c.ChunksOverworld, Chunk{
-						X:    int32(pos.X),
-						Z:    int32(pos.Y),
-						Time: time.Now().Unix(),
-					})
-				}
+				c.Chunks[i] = append(c.Chunks[i], Chunk{
+					X:    pos.X,
+					Z:    pos.Y,
+					Time: time.Now().Unix(),
+				})
 			}
 		}
 	}
@@ -103,18 +111,19 @@ func ConvertToSNBT(data *ChunkData) (string, error) {
 
 // WriteSNBT writes the SNBT string to a file
 func WriteSNBT(filename string, snbt string) error {
-	return ioutil.WriteFile(filename, []byte(snbt), 0644)
+	return os.WriteFile(filename, []byte(snbt), 0644)
 }
 
-func main() {
-	nbtFile := "openpac-sample.nbt"
-	//snbtFile := "ftb-sample.snbt"
-	newSnbtFile := "test.snbt"
-
+func handleFile(filename string) {
 	// Read the NBT data
-	chunkData, err := ReadNBT(nbtFile)
+	chunkData, err := ReadNBT(filename)
 	if err != nil {
 		fmt.Println("Error reading NBT:", err)
+		return
+	}
+
+	if len(chunkData.Chunks) == 0 {
+		fmt.Println("Invalid NBT file")
 		return
 	}
 
@@ -125,12 +134,90 @@ func main() {
 		return
 	}
 
+	fileNameClean := strings.Replace(strings.Replace(filename, ".nbt", ".snbt", 1), "./player-claims", "", 1)
+
+	if strings.Contains(fileNameClean, "00000000-0000-0000-0000-") {
+		// Server file, hardcoded
+		fileNameClean = "30be7d9a-1adb-4a32-b0f0-50fdde3c0dc6.snbt"
+
+		basePath := path.Join(outputFolder, "ftbteams/server")
+		err = os.MkdirAll(basePath, os.ModePerm)
+
+		if err != nil {
+			fmt.Println("Error making server directories:", err)
+			return
+		}
+
+		serverContent := `{
+	id: "30be7d9a-1adb-4a32-b0f0-50fdde3c0dc6"
+	type: "server"
+	ranks: { }
+	properties: {
+		"ftbchunks:allow_explosions": 0b
+		"ftbchunks:allow_mob_griefing": 0b
+		"ftbchunks:allow_fake_players": 0b
+		"ftbchunks:allow_named_fake_players": [ ]
+		"ftbchunks:allow_fake_players_by_id": 1b
+		"ftbchunks:allow_pvp": 1b
+		"ftbchunks:block_edit_and_interact_mode": "allies"
+		"ftbchunks:entity_interact_mode": "allies"
+		"ftbchunks:nonliving_entity_attack_mode": "allies"
+		"ftbchunks:claim_visibility": "public"
+		"ftbchunks:location_mode": "allies"
+		"ftbteams:display_name": "server"
+		"ftbteams:description": ""
+		"ftbteams:color": "#59C6FF"
+		"ftbteams:free_to_join": 0b
+		"ftbteams:max_msg_history_size": 1000
+	}
+	message_history: [ ]
+	extra: { }
+}`
+
+		err = WriteSNBT(fmt.Sprintf("%s/%s", basePath, fileNameClean), serverContent)
+		if err != nil {
+			fmt.Println("Error writing server SNBT:", err)
+			return
+		}
+	}
+
+	basePath := path.Join(outputFolder, "ftbchunks")
+	err = os.MkdirAll(basePath, os.ModePerm)
+
+	if err != nil {
+		fmt.Println("Error making output directories:", err)
+		return
+	}
+
 	// Write the SNBT to a file
-	err = WriteSNBT(newSnbtFile, snbt)
+	err = WriteSNBT(fmt.Sprintf("%s/%s", basePath, fileNameClean), snbt)
 	if err != nil {
 		fmt.Println("Error writing SNBT:", err)
 		return
 	}
 
 	fmt.Println("Successfully converted NBT to SNBT!")
+}
+
+func main() {
+	err := os.RemoveAll(path.Join(outputFolder, "ftbchunks"))
+	if err != nil {
+		fmt.Println("Failed to remove ftbchunks")
+		return
+	}
+	err = os.RemoveAll(path.Join(outputFolder, "ftbteams"))
+	if err != nil {
+		fmt.Println("Failed to remove ftbteams")
+		return
+	}
+	// The player-claims directory contains OpenPac claim data
+	items, _ := os.ReadDir("./player-claims")
+	for _, item := range items {
+		if item.IsDir() {
+			fmt.Println("Unexpected directory", item.Name())
+		} else {
+			// handle file there
+			handleFile(fmt.Sprintf("%s/%s", "./player-claims", item.Name()))
+		}
+	}
 }

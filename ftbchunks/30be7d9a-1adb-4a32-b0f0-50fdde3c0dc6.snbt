@@ -1,0 +1,12 @@
+{
+	max_claim_chunks: -1
+	max_force_load_chunks: -1
+	last_login_time: 0L
+	chunks: {
+		"minecraft:overworld": [
+			{ x: -6, z: 2, time: 1728907015093L }
+			{ x: -6, z: 1, time: 1728907010771L }
+			{ x: -6, z: 0, time: 1728906994982L }
+		]
+	}
+}
