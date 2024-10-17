@@ -13,23 +13,25 @@ const outputFolder = "./output"
 
 // Chunk represents a Minecraft chunk with x, z coordinates and time
 type Chunk struct {
-	X           int32  `nbt:"x"`
-	Z           int32  `nbt:"z"`
-	Time        int64  `nbt:"time"`
-	Forceloaded *int64 `nbt:"forceloaded"`
+	X           int32 `nbt:"x"`
+	Z           int32 `nbt:"z"`
+	Time        int64 `nbt:"time"`
+	Forceloaded int64 `nbt:"forceloaded,omitempty"`
 }
 
 type MemberData struct {
-	// TODO implement this
+	MaxForceloadedChunks int32 `nbt:"max_force_loaded_chunks"`
+	MaxClaimedChunks     int32 `nbt:"max_claimed_chunks"`
+	OfflineForcelloader  bool  `nbt:"offline_force_loader"`
 }
 
 // ChunkData represents the structure of NBT data to hold chunk coordinates
 type ChunkData struct {
-	MaxClaimChunks     int32              `nbt:"max_claim_chunks"`
-	MaxForceLoadChunks int32              `nbt:"max_force_load_chunks"`
-	LastLoginTime      int64              `nbt:"last_login_time"`
-	Chunks             map[string][]Chunk `nbt:"chunks"`
-	MemberData         MemberData         `nbt:"member_data"`
+	MaxClaimChunks     int32                 `nbt:"max_claim_chunks"`
+	MaxForceLoadChunks int32                 `nbt:"max_force_load_chunks"`
+	LastLoginTime      int64                 `nbt:"last_login_time"`
+	Chunks             map[string][]Chunk    `nbt:"chunks"`
+	MemberData         map[string]MemberData `nbt:"member_data"`
 }
 
 type State struct {
@@ -39,7 +41,7 @@ type State struct {
 
 type Position struct {
 	X int32 `nbt:"x"`
-	Y int32 `nbt:"y"`
+	Z int32 `nbt:"z"`
 }
 
 type Claim struct {
@@ -70,25 +72,37 @@ func ReadNBT(filename string) (*ChunkData, error) {
 	if err != nil {
 		return nil, err
 	}
-	return convertOpenPaCToChunkData(&chunkData), nil
+	return convertOpenPaCToChunkData(&chunkData, cleanFilename(filename)), nil
 }
 
-func convertOpenPaCToChunkData(o *OpenPaC) *ChunkData {
+func convertOpenPaCToChunkData(o *OpenPaC, uuid string) *ChunkData {
 	c := ChunkData{
 		MaxClaimChunks:     250,
 		MaxForceLoadChunks: 2,
 		LastLoginTime:      time.Now().Unix(),
 		Chunks:             make(map[string][]Chunk, len(o.Dimensions)),
+		MemberData: map[string]MemberData{
+			uuid: {
+				MaxForceloadedChunks: 2,
+				MaxClaimedChunks:     250,
+				OfflineForcelloader:  false,
+			},
+		},
 	}
+	unixNow := time.Now().Unix()
 	for i, dim := range o.Dimensions {
 		c.Chunks[i] = make([]Chunk, 0)
 		for _, cl := range dim.Claims {
 			for _, pos := range cl.Claims {
-				c.Chunks[i] = append(c.Chunks[i], Chunk{
+				chnk := Chunk{
 					X:    pos.X,
-					Z:    pos.Y,
-					Time: time.Now().Unix(),
-				})
+					Z:    pos.Z,
+					Time: unixNow,
+				}
+				if cl.State.Forceloaded {
+					chnk.Forceloaded = unixNow
+				}
+				c.Chunks[i] = append(c.Chunks[i], chnk)
 			}
 		}
 	}
@@ -134,7 +148,7 @@ func handleFile(filename string) {
 		return
 	}
 
-	fileNameClean := strings.Replace(strings.Replace(filename, ".nbt", ".snbt", 1), "./player-claims", "", 1)
+	fileNameClean := fmt.Sprintf("%s.snbt", cleanFilename(filename))
 
 	if strings.Contains(fileNameClean, "00000000-0000-0000-0000-") {
 		// Server file, hardcoded
@@ -197,6 +211,12 @@ func handleFile(filename string) {
 	}
 
 	fmt.Println("Successfully converted NBT to SNBT!")
+}
+
+func cleanFilename(filename string) string {
+	filename = strings.Replace(filename, ".nbt", "", 1)
+	filename = strings.Replace(filename, "./player-claims/", "", 1)
+	return filename
 }
 
 func main() {
